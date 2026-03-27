@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>agent-eval dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid #1e3a5f;
+      padding-bottom: 1rem;
+    }
+
+    header h1 { color: #60a5fa; font-size: 1.5rem; }
+    header span { color: #64748b; font-size: 0.85rem; }
+
+    section { margin-bottom: 2.5rem; }
+    section h2 { color: #93c5fd; font-size: 1.1rem; margin-bottom: 1rem; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th {
+      background: #1e3a5f;
+      color: #93c5fd;
+      padding: 0.6rem 1rem;
+      text-align: left;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th:hover { background: #1e4080; }
+    th.sort-asc::after  { content: " ▲"; }
+    th.sort-desc::after { content: " ▼"; }
+    td {
+      padding: 0.5rem 1rem;
+      border-bottom: 1px solid #1e293b;
+      white-space: nowrap;
+    }
+    tr:hover td { background: #1e293b; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Empty state */
+    .empty {
+      text-align: center;
+      padding: 3rem;
+      color: #64748b;
+    }
+    .empty .icon { font-size: 3rem; margin-bottom: 1rem; }
+    .empty p { margin-bottom: 0.5rem; }
+    .empty code { background: #1e293b; padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.85rem; }
+
+    /* Compare form */
+    .compare-form {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 1.5rem;
+      max-width: 600px;
+    }
+    .compare-form label { display: block; color: #94a3b8; margin-bottom: 0.3rem; font-size: 0.85rem; }
+    .compare-form input[type="text"] {
+      width: 100%;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .compare-form input[type="text"]:focus {
+      outline: none;
+      border-color: #60a5fa;
+    }
+    .compare-form button {
+      background: #1d4ed8;
+      color: #fff;
+      border: none;
+      padding: 0.5rem 1.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+    .compare-form button:hover { background: #2563eb; }
+
+    /* Compare results */
+    #compare-result { margin-top: 1.5rem; }
+    #compare-result table { max-width: 800px; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.1rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+    .badge-green { background: #14532d; color: #4ade80; }
+    .badge-red   { background: #4c1d1d; color: #f87171; }
+
+    /* Loading */
+    .loading { color: #64748b; font-style: italic; }
+
+    /* Error */
+    .error { color: #f87171; background: #4c1d1d; padding: 0.75rem 1rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>agent-eval dashboard</h1>
+  <span id="run-count">Loading...</span>
+</header>
+
+<section id="runs-section">
+  <h2>Evaluation Runs</h2>
+  <div class="table-wrap" id="runs-container">
+    <p class="loading">Loading runs...</p>
+  </div>
+</section>
+
+<section id="compare-section">
+  <h2>Compare Runs</h2>
+  <div class="compare-form">
+    <label for="run-a-input">Run ID A</label>
+    <input type="text" id="run-a-input" placeholder="e.g. 3fa85f64-5717-..."/>
+
+    <label for="run-b-input">Run ID B</label>
+    <input type="text" id="run-b-input" placeholder="e.g. 7c9e6679-7425-..."/>
+
+    <button onclick="doCompare()">Compare</button>
+  </div>
+  <div id="compare-result"></div>
+</section>
+
+<script>
+  // ── Config ────────────────────────────────────────────────────────────────
+  const API = '';   // same origin
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let allRuns = [];
+  let sortCol = 'created_at';
+  let sortDir = 'desc';
+
+  // ── Fetch runs ────────────────────────────────────────────────────────────
+  async function fetchRuns(page = 1, page_size = 200) {
+    const res = await fetch(`${API}/api/runs?page=${page}&page_size=${page_size}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  async function loadRuns() {
+    const container = document.getElementById('runs-container');
+    const counter   = document.getElementById('run-count');
+    try {
+      const data = await fetchRuns();
+      allRuns = data.runs || [];
+      counter.textContent = `${data.total} run${data.total !== 1 ? 's' : ''}`;
+
+      if (allRuns.length === 0) {
+        container.innerHTML = `
+          <div class="empty">
+            <div class="icon">📭</div>
+            <p>No evaluation runs found.</p>
+            <p>Run <code>agent-eval run --task your_script.py</code> to get started.</p>
+          </div>`;
+        return;
+      }
+      renderTable(allRuns);
+    } catch (e) {
+      container.innerHTML = `<div class="error">Failed to load runs: ${e.message}</div>`;
+    }
+  }
+
+  // ── Render table ──────────────────────────────────────────────────────────
+  const COLS = [
+    { key: 'run_id',             label: 'Run ID' },
+    { key: 'task',               label: 'Task' },
+    { key: 'model',              label: 'Model' },
+    { key: 'turn_count',         label: 'Turns' },
+    { key: 'total_tool_calls',   label: 'Tool Calls' },
+    { key: 'tool_success_rate',  label: 'Success Rate' },
+    { key: 'estimated_cost_usd', label: 'Cost (USD)' },
+    { key: 'created_at',         label: 'Created At' },
+  ];
+
+  function renderTable(runs) {
+    const sorted = [...runs].sort((a, b) => {
+      let av = a[sortCol] ?? '';
+      let bv = b[sortCol] ?? '';
+      if (typeof av === 'number' && typeof bv === 'number') {
+        return sortDir === 'asc' ? av - bv : bv - av;
+      }
+      av = String(av); bv = String(bv);
+      return sortDir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+
+    const headerCells = COLS.map(c => {
+      let cls = '';
+      if (c.key === sortCol) cls = sortDir === 'asc' ? 'sort-asc' : 'sort-desc';
+      return `<th class="${cls}" onclick="sortBy('${c.key}')">${c.label}</th>`;
+    }).join('');
+
+    const bodyRows = sorted.map(r => {
+      const shortId = (r.run_id || '').slice(0, 8);
+      const metricsUrl = `/api/runs/${r.run_id}/metrics`;
+      const rate = r.tool_success_rate != null ? (r.tool_success_rate * 100).toFixed(1) + '%' : '-';
+      const cost = r.estimated_cost_usd != null ? '$' + r.estimated_cost_usd.toFixed(4) : '-';
+      const created = r.created_at ? r.created_at.replace('T', ' ').slice(0, 16) : '-';
+      return `<tr>
+        <td><a href="${metricsUrl}" target="_blank" title="${r.run_id}">${shortId}</a></td>
+        <td>${r.task || '-'}</td>
+        <td>${r.model || '-'}</td>
+        <td>${r.turn_count ?? '-'}</td>
+        <td>${r.total_tool_calls ?? '-'}</td>
+        <td>${rate}</td>
+        <td>${cost}</td>
+        <td>${created}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('runs-container').innerHTML = `
+      <table>
+        <thead><tr>${headerCells}</tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>`;
+  }
+
+  function sortBy(col) {
+    if (sortCol === col) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortCol = col;
+      sortDir = col === 'created_at' ? 'desc' : 'asc';
+    }
+    renderTable(allRuns);
+  }
+
+  // ── Compare ───────────────────────────────────────────────────────────────
+  async function doCompare() {
+    const runA = document.getElementById('run-a-input').value.trim();
+    const runB = document.getElementById('run-b-input').value.trim();
+    const resultDiv = document.getElementById('compare-result');
+
+    if (!runA || !runB) {
+      resultDiv.innerHTML = '<div class="error">Please enter both run IDs.</div>';
+      return;
+    }
+
+    resultDiv.innerHTML = '<p class="loading">Comparing...</p>';
+
+    try {
+      const res = await fetch(`${API}/api/compare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_id_a: runA, run_id_b: runB }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(err.detail || res.statusText);
+      }
+      const data = await res.json();
+      renderComparison(data);
+    } catch (e) {
+      resultDiv.innerHTML = `<div class="error">Compare failed: ${e.message}</div>`;
+    }
+  }
+
+  function renderComparison(data) {
+    const ma = data.metrics_a;
+    const mb = data.metrics_b;
+
+    const metrics = [
+      { label: 'Tool Success Rate',   a: pct(ma.tool.success_rate),          b: pct(mb.tool.success_rate),          higher: true,  raw_a: ma.tool.success_rate,          raw_b: mb.tool.success_rate },
+      { label: 'Total Tool Calls',    a: ma.tool.total_calls,                 b: mb.tool.total_calls,                higher: true,  raw_a: ma.tool.total_calls,           raw_b: mb.tool.total_calls },
+      { label: 'Hallucination Rate',  a: pct(ma.hallucination.hallucination_rate), b: pct(mb.hallucination.hallucination_rate), higher: false, raw_a: ma.hallucination.hallucination_rate, raw_b: mb.hallucination.hallucination_rate },
+      { label: 'Total Latency (ms)',  a: ma.latency.total_ms,                  b: mb.latency.total_ms,                higher: false, raw_a: ma.latency.total_ms,           raw_b: mb.latency.total_ms },
+      { label: 'Est. Cost (USD)',     a: '$' + ma.cost.total_usd.toFixed(6),    b: '$' + mb.cost.total_usd.toFixed(6), higher: false, raw_a: ma.cost.total_usd,             raw_b: mb.cost.total_usd },
+      { label: 'Input Tokens',        a: ma.cost.input_tokens,                 b: mb.cost.input_tokens,               higher: true,  raw_a: ma.cost.input_tokens,          raw_b: mb.cost.input_tokens },
+    ];
+
+    const shortA = data.run_id_a.slice(0, 8);
+    const shortB = data.run_id_b.slice(0, 8);
+
+    const rows = metrics.map(m => {
+      const delta = m.raw_b - m.raw_a;
+      const good = (delta > 0) === m.higher;
+      let deltaLabel = delta > 0 ? '▲' : (delta < 0 ? '▼' : '=');
+      const pctDelta = m.raw_a !== 0 ? ` (${((delta / Math.abs(m.raw_a)) * 100).toFixed(1)}%)` : '';
+      const badge = delta === 0 ? '' : `<span class="badge ${good ? 'badge-green' : 'badge-red'}">${deltaLabel}${pctDelta}</span>`;
+      return `<tr>
+        <td>${m.label}</td>
+        <td>${m.a}</td>
+        <td>${m.b}</td>
+        <td>${badge}</td>
+      </tr>`;
+    }).join('');
+
+    document.getElementById('compare-result').innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Metric</th>
+            <th>A: ${shortA}</th>
+            <th>B: ${shortB}</th>
+            <th>Delta</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function pct(v) {
+    if (v == null) return '-';
+    return (v * 100).toFixed(1) + '%';
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  loadRuns();
+
+  // Auto-fill compare form when user clicks a run_id link (optional UX)
+  document.addEventListener('click', e => {
+    const td = e.target.closest('td:first-child');
+    if (td) {
+      const title = e.target.getAttribute('title');
+      if (title) {
+        const inputA = document.getElementById('run-a-input');
+        const inputB = document.getElementById('run-b-input');
+        if (!inputA.value) { inputA.value = title; }
+        else if (!inputB.value && inputA.value !== title) { inputB.value = title; }
+      }
+    }
+  });
+</script>
+
+</body>
+</html>

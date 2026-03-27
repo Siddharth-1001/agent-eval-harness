@@ -1,0 +1,40 @@
+# Pricing in USD per 1M tokens
+[models."claude-opus-4-6"]
+input_per_1m  = 15.00
+output_per_1m = 75.00
+
+[models."claude-sonnet-4-6"]
+input_per_1m  = 3.00
+output_per_1m = 15.00
+
+[models."claude-haiku-4-5"]
+input_per_1m  = 0.80
+output_per_1m = 4.00
+
+[models."gpt-4o"]
+input_per_1m  = 2.50
+output_per_1m = 10.00
+
+[models."gpt-4o-mini"]
+input_per_1m  = 0.15
+output_per_1m = 0.60
+
+[models."gpt-4-turbo"]
+input_per_1m  = 10.00
+output_per_1m = 30.00
+
+[models."gemini-1.5-pro"]
+input_per_1m  = 1.25
+output_per_1m = 5.00
+
+[models."gemini-1.5-flash"]
+input_per_1m  = 0.075
+output_per_1m = 0.30
+
+[models."llama-3.3-70b"]
+input_per_1m  = 0.23
+output_per_1m = 0.40
+
+[models."llama-3.1-405b"]
+input_per_1m  = 3.00
+output_per_1m = 3.00

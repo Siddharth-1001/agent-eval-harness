@@ -1,0 +1,66 @@
+[project]
+name = "agent-eval-harness"
+version = "0.1.0"
+description = "Open-source evaluation framework for agentic AI systems"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "pydantic>=2.10",
+    "typer>=0.15",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "rich>=13.9",
+    "httpx>=0.28",
+    "aiofiles>=24.1",
+]
+
+[project.optional-dependencies]
+langchain  = ["langchain>=0.3", "langgraph>=0.3"]
+openai     = ["openai-agents>=0.1"]
+crewai     = ["crewai>=0.86"]
+anthropic  = ["anthropic>=0.40"]
+pydantic-ai = ["pydantic-ai>=0.0.20"]
+all        = ["agent-eval-harness[langchain,openai,crewai,anthropic,pydantic-ai]"]
+dev        = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+    "httpx>=0.28",
+    "aiofiles>=24.1",
+]
+
+[project.scripts]
+agent-eval = "agent_eval.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = ["agent-eval-harness[dev]"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501", "SIM117"]
+"examples/**" = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=agent_eval --cov-report=term-missing --cov-fail-under=85"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent_eval"]

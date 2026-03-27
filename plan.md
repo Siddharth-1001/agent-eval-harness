@@ -1,8 +1,38 @@
 # agent-eval-harness — End-to-End Developer Plan
 
-> **Stack baseline:** Python 3.14.x · uv · ruff · pydantic v2 · FastAPI · React 19 · Vite  
-> **Target:** OSS, local-only, publishable to GitHub as a public repo  
+> **Stack baseline:** Python >=3.12 · uv · ruff · pydantic v2 · FastAPI · React 19 · Vite
+> **Target:** OSS, local-only, publishable to GitHub as a public repo
 > **Goal:** Drop-in eval harness — developers plug it into existing agent projects with minimal friction
+
+---
+
+## Resolved Design Decisions
+
+> The following decisions were finalized before development began. They apply across all phases.
+
+### Decision 1: Python >=3.12 with Conditional 3.14 Features
+- **Minimum version:** `requires-python = ">=3.12"` — balances adoption (3.12 is current stable) with modern features (`tomllib`, `asyncio.TaskGroup`, improved type hints)
+- **CI matrix:** test on `[3.12, 3.13, 3.14]`
+- **3.14-specific features** (free-threaded mode, `annotationlib`) are used conditionally via `sys.version_info` guards — they enhance performance but are never required
+- **Rationale:** Requiring 3.14 would exclude most production teams. Major libraries (Pydantic, FastAPI, LangChain) follow this same pattern.
+
+### Decision 2: Hallucination Flags — Inline on ToolCall
+- **Placement:** `hallucination_flags: list[HallucinationFlag]` lives on the `ToolCall` model (not in a separate collection)
+- **Populated during metrics computation**, not during trace collection — flags start as `[]` and are filled by `HallucinationDetector`
+- **Rationale:** Co-location (like OpenTelemetry span attributes), simpler serialization, no join logic needed at query time. RFC-0001 open question is now closed.
+
+### Decision 3: Trace File Size — Truncation Config
+- **TraceWriter** accepts a `TraceWriterConfig` with truncation limits:
+  - `max_output_chars: int = 10_000` — truncates tool call output
+  - `max_content_chars: int = 50_000` — truncates turn content
+  - `max_trace_size_mb: float = 5.0` — hard ceiling; oldest turns' content truncated if exceeded (metadata preserved)
+  - `truncation_marker: str = "... [truncated, {original_len} chars total]"` — preserves original length for debugging
+- **Configurable per-run:** power users can set `max_output_chars=0` to disable truncation
+- **Rationale:** PRD targets <1MB for 100 turns, but real agents with large tool outputs will exceed this without guardrails.
+
+### Decision 4: PR Review SLA — Best Effort
+- **Wording:** "We aim to review pull requests within 48 business hours. Complex changes may take longer. If your PR hasn't received feedback within a week, feel free to ping the thread."
+- **Rationale:** Hard SLAs burn out volunteer maintainers. Soft language sets expectations without creating obligations. Standard practice in major OSS projects.
 
 ---
 
@@ -16,23 +46,23 @@ Based on current production usage data (2026):
 | **OpenAI Agents SDK** | Fastest growing, cleanest API, successor to Swarm | 10.3M/month |
 | **CrewAI** | Most GitHub stars (44k+), dominant for multi-agent | 5.2M/month |
 | **Anthropic (raw)** | Native tool-use API, Claude users | Core audience |
-| **PydanticAI** | Type-safe, built by the pydantic team — perfect Python 3.14 fit | Growing fast |
+| **PydanticAI** | Type-safe, built by the pydantic team — perfect Python 3.12+ fit | Growing fast |
 | ~~AutoGen/AG2~~ | ~~Skipped — in maintenance mode, Microsoft merged into Agent Framework~~ | Maintenance only |
 
 > **Microsoft Agent Framework** (merged AutoGen + Semantic Kernel) targets GA Q1 2026 — add as v1.5 adapter once stable.
 
 ---
 
-## Technology Stack (All Latest, 2026)
+## Technology Stack (2026)
 
 ### Core
 | Concern | Tool | Why |
 |---|---|---|
 | Package manager | **uv** | Replaces pip/poetry — 10–100x faster, built-in lockfile |
-| Python | **3.14.x** | Free-threaded mode (PEP 703), improved `annotationlib`, better `asyncio` |
+| Python | **>=3.12** | Broad adoption; 3.14 features used conditionally (see Decision 1) |
 | Schema / validation | **pydantic v2.x** | Powers OpenAI SDK, Anthropic SDK, LangChain internals — de facto standard |
 | Linting + formatting | **ruff** | Single tool replaces flake8 + black + isort |
-| Type checking | **pyright** (strict) | Faster than mypy, better Python 3.14 support |
+| Type checking | **pyright** (strict) | Faster than mypy, excellent Python 3.12+ support |
 | CLI | **typer 0.15+** | Auto-generates `--help`, async support, clean ergonomics |
 | Testing | **pytest 8.x + pytest-asyncio** | Latest asyncio mode (`asyncio_mode = "auto"`) |
 | Coverage | **coverage.py + pytest-cov** | Enforced in CI at 85% |
@@ -47,12 +77,23 @@ Based on current production usage data (2026):
 | UI components | **shadcn/ui** | Headless, accessible, no external runtime |
 | Styling | **Tailwind CSS 4** | Zero-config purge, CSS-first approach in v4 |
 
-### Python 3.14-Specific Features to Use
-- **Free-threaded mode** (`python3.14t`) — for async trace collection with no GIL contention
-- **`annotationlib`** — lazy annotation evaluation for pydantic model performance
-- **`asyncio.TaskGroup`** — structured concurrency for parallel metric analyzers
-- **Improved `pathlib`** — cleaner trace file I/O
-- **`tomllib` (stdlib)** — read `pyproject.toml` config natively without extra deps
+### Python Version Feature Matrix
+| Feature | 3.12+ (always) | 3.14+ (conditional) |
+|---|---|---|
+| `tomllib` (stdlib) | Yes | Yes |
+| `asyncio.TaskGroup` | Yes (3.11+) | Yes |
+| Improved `pathlib` | Yes | Yes |
+| `annotationlib` (lazy eval) | No — uses `from __future__ import annotations` | Yes via `sys.version_info` guard |
+| Free-threaded mode (`python3.14t`) | No | Yes — optional optimization for trace collection |
+
+Conditional import pattern used throughout:
+```python
+import sys
+if sys.version_info >= (3, 14):
+    from annotationlib import ...
+else:
+    from __future__ import annotations
+```
 
 ---
 
@@ -114,7 +155,7 @@ agent-eval-harness/
 │   │   └── publish.yml
 │   ├── ISSUE_TEMPLATE/
 │   └── pull_request_template.md
-├── pyproject.toml               # uv + hatch, Python 3.14+
+├── pyproject.toml               # uv + hatch, Python >=3.12
 ├── uv.lock
 ├── README.md
 ├── CONTRIBUTING.md
@@ -136,7 +177,7 @@ agent-eval-harness/
 # Initialize with uv (not pip, not poetry)
 uv init agent-eval-harness
 cd agent-eval-harness
-uv python pin 3.14
+uv python pin 3.12
 
 # Create package structure
 mkdir -p agent_eval/{tracer,metrics,adapters,dashboard}
@@ -150,7 +191,7 @@ mkdir -p examples rfcs docs .github/{workflows,ISSUE_TEMPLATE}
 name = "agent-eval-harness"
 version = "0.1.0"
 description = "Open-source evaluation framework for agentic AI systems"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "pydantic>=2.10",
@@ -184,18 +225,18 @@ agent-eval = "agent_eval.cli:app"
 dev-dependencies = ["agent-eval-harness[dev]"]
 
 [tool.ruff]
-target-version = "py314"
+target-version = "py312"
 line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"          # Python 3.14 asyncio mode
+asyncio_mode = "auto"          # pytest-asyncio auto mode
 testpaths = ["tests"]
 addopts = "--cov=agent_eval --cov-report=term-missing --cov-fail-under=85"
 
 [tool.pyright]
-pythonVersion = "3.14"
+pythonVersion = "3.12"
 typeCheckingMode = "strict"
 ```
 
@@ -210,7 +251,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4       # uv, not pip
@@ -315,7 +356,7 @@ class Trace(BaseModel):
 File: `agent_eval/tracer/collector.py`
 
 - Stateful buffer — accumulates `TraceEvent` objects during a run
-- Thread-safe using `asyncio.Lock` (Python 3.14 free-threaded compatible)
+- Thread-safe using `asyncio.Lock` (Python 3.14 free-threaded compatible when available)
 - Emits a `Trace` when `finalize()` is called
 - Supports both sync and async agent runtimes
 
@@ -354,6 +395,16 @@ File: `agent_eval/tracer/writer.py`
 - Default: `~/.agent-eval/traces/`
 - Uses `pydantic v2` `.model_dump_json()` for serialization
 - Async-safe with `aiofiles`
+- **Truncation support** (see Decision 3):
+
+```python
+class TraceWriterConfig(BaseModel):
+    output_dir: Path = Path("~/.agent-eval/traces/").expanduser()
+    max_output_chars: int = 10_000      # truncate tool output beyond this
+    max_content_chars: int = 50_000     # truncate turn content beyond this
+    max_trace_size_mb: float = 5.0      # hard ceiling — oldest turns' content truncated
+    truncation_marker: str = "... [truncated, {original_len} chars total]"
+```
 
 #### 1.5 — Tests for Phase 1
 ```
@@ -380,7 +431,7 @@ tests/integration/
 
 #### 2.1 — Design Principle: Composable Analyzers
 
-All analyzers are **stateless functions / pure classes** — they take a `Trace` and return a typed result. They use `asyncio.TaskGroup` (Python 3.14) to run in parallel.
+All analyzers are **stateless functions / pure classes** — they take a `Trace` and return a typed result. They use `asyncio.TaskGroup` (stdlib since 3.11) to run in parallel.
 
 ```python
 async def compute_all_metrics(trace: Trace, config: MetricsConfig) -> MetricsReport:
@@ -460,7 +511,7 @@ File: `agent_eval/metrics/latency.py`
 File: `agent_eval/metrics/cost.py`
 
 - Token-based cost estimation
-- Pricing table loaded from `pricing.toml` (uses Python 3.14 stdlib `tomllib`)
+- Pricing table loaded from `pricing.toml` (uses stdlib `tomllib`, available since 3.11)
 - Ships with a built-in pricing table for all major models
 - Developer can override per-run via config
 - Returns: `total_usd`, `cost_per_turn`, `cost_breakdown_by_model`
@@ -601,7 +652,7 @@ File: `agent_eval/adapters/pydantic_ai.py`
 
 - Uses PydanticAI's native `UsageLimits` and `result` inspection
 - Hooks into `agent.run_sync()` / `agent.run()` via dependency injection
-- Natively typed — best Python 3.14 ergonomics of all adapters
+- Natively typed — best Python 3.12+ ergonomics of all adapters
 
 ```python
 # Developer usage
@@ -770,7 +821,7 @@ examples/
 #### 5.5 — Phase 5 Exit Criteria
 - [ ] All 5 example scripts run with `uv run python examples/<name>.py` and no errors
 - [ ] README renders correctly — all code blocks are valid, no broken links
-- [ ] `pip install agent-eval-harness` installs cleanly on Python 3.14
+- [ ] `pip install agent-eval-harness` installs cleanly on Python 3.12+
 - [ ] First public release: `git tag v0.1.0 && git push --tags`
 
 ---
@@ -787,7 +838,7 @@ examples/
 **Key rules:**
 - No real LLM API calls in CI — ever
 - No internet access in tests — ever
-- Async tests use `asyncio_mode = "auto"` (pytest-asyncio, Python 3.14)
+- Async tests use `asyncio_mode = "auto"` (pytest-asyncio)
 - All test fixtures in `conftest.py` — no repeated setup code
 
 ---
