@@ -98,6 +98,9 @@ def _type_matches(value: Any, expected_type: str) -> bool:
     py_type = type_map.get(expected_type)
     if py_type is None:
         return True  # Unknown type — don't flag
+    # bool is a subclass of int in Python; a boolean must not match "integer"
+    if expected_type == "integer" and isinstance(value, bool):
+        return False
     return isinstance(value, py_type)
 
 
@@ -196,3 +199,144 @@ class HallucinationDetector:
             flags_by_tool=flags_by_tool,
             flags_by_method=flags_by_method,
         )
+
+
+# ── LLM judge helpers ─────────────────────────────────────────────────────────
+
+
+def _build_judge_prompt(tool_call: ToolCall, context: str) -> str:
+    """Build a structured prompt for LLM judge evaluation."""
+    args_str = "\n".join(f"  {k}: {v!r}" for k, v in tool_call.input_args.items())
+    return (
+        "You are an expert AI evaluator checking for hallucinations in tool call arguments.\n\n"
+        f"Agent context (what the agent was trying to do):\n{context or 'No context provided.'}\n\n"
+        f"Tool called: {tool_call.tool_name}\n"
+        f"Arguments provided:\n{args_str or '  (no arguments)'}\n\n"
+        "Identify any arguments that appear hallucinated (fabricated, implausible, or "
+        "inconsistent with context).\n"
+        "For each hallucination found, respond with one line in this exact format:\n"
+        "HALLUCINATION: <argument_name> | expected: <what_was_expected> | "
+        "received: <what_was_given> | confidence: <0.0-1.0>\n"
+        "If no hallucinations are found, respond with: NONE"
+    )
+
+
+def _parse_judge_response(
+    raw: str, tool_call: ToolCall, sensitivity: float
+) -> list[HallucinationFlag]:
+    """Parse structured LLM judge output into HallucinationFlag objects."""
+    flags: list[HallucinationFlag] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("HALLUCINATION:"):
+            continue
+        try:
+            body = line[len("HALLUCINATION:"):].strip()
+            parts = [p.strip() for p in body.split("|")]
+            if len(parts) < 4:
+                continue
+            arg_name = parts[0].strip()
+            expected = parts[1].replace("expected:", "").strip()
+            received_str = parts[2].replace("received:", "").strip()
+            confidence_str = parts[3].replace("confidence:", "").strip()
+            confidence = float(confidence_str)
+            if confidence < sensitivity:
+                continue
+            flags.append(
+                HallucinationFlag(
+                    argument_name=arg_name,
+                    expected=expected,
+                    received=received_str,
+                    confidence=confidence,
+                    method="llm_judge",
+                )
+            )
+        except Exception:
+            continue
+    return flags
+
+
+# ── Reference LLM judge implementations ──────────────────────────────────────
+
+
+class AnthropicLLMJudge:
+    """
+    Reference :class:`LLMJudge` implementation backed by the Anthropic API.
+
+    Requires the ``anthropic`` extra::
+
+        pip install 'agent-eval-harness[anthropic]'
+
+    Usage::
+
+        from agent_eval.metrics.hallucination import (
+            AnthropicLLMJudge, HallucinationDetector, HallucinationConfig
+        )
+        detector = HallucinationDetector(
+            config=HallucinationConfig(default_mode="llm_judge"),
+            llm_judge=AnthropicLLMJudge(),
+        )
+    """
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        self._api_key = api_key  # Falls back to ANTHROPIC_API_KEY env var
+        self._default_model = model  # Overrides per-tool judge_model when set
+
+    async def judge(
+        self, tool_call: ToolCall, context: str, model: str, sensitivity: float
+    ) -> list[HallucinationFlag]:
+        try:
+            import anthropic  # type: ignore[import-untyped]
+        except ImportError:
+            raise ImportError(
+                "Install anthropic: pip install 'agent-eval-harness[anthropic]'"
+            ) from None
+
+        client = anthropic.AsyncAnthropic(api_key=self._api_key)
+        judge_model = self._default_model or model
+        prompt = _build_judge_prompt(tool_call, context)
+        response = await client.messages.create(
+            model=judge_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text if response.content else ""
+        return _parse_judge_response(raw, tool_call, sensitivity)
+
+
+class OpenAILLMJudge:
+    """
+    Reference :class:`LLMJudge` implementation backed by the OpenAI Chat API.
+
+    Requires ``openai``::
+
+        pip install openai
+
+    Usage::
+
+        from agent_eval.metrics.hallucination import OpenAILLMJudge, HallucinationDetector
+        detector = HallucinationDetector(llm_judge=OpenAILLMJudge(model="gpt-4o-mini"))
+    """
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        self._api_key = api_key  # Falls back to OPENAI_API_KEY env var
+        self._default_model = model
+
+    async def judge(
+        self, tool_call: ToolCall, context: str, model: str, sensitivity: float
+    ) -> list[HallucinationFlag]:
+        try:
+            import openai  # type: ignore[import-untyped]
+        except ImportError:
+            raise ImportError("Install openai: pip install openai") from None
+
+        client = openai.AsyncOpenAI(api_key=self._api_key)
+        judge_model = self._default_model or model
+        prompt = _build_judge_prompt(tool_call, context)
+        response = await client.chat.completions.create(
+            model=judge_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.choices[0].message.content or "" if response.choices else ""
+        return _parse_judge_response(raw, tool_call, sensitivity)

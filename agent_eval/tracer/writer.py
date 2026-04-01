@@ -1,10 +1,66 @@
 from __future__ import annotations
 
+import statistics
+import tomllib
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent_eval.tracer.schema import Trace
+from agent_eval.tracer.schema import RunSummary, Trace
+
+
+def _compute_run_summary(trace: Trace) -> RunSummary:
+    """
+    Compute a :class:`RunSummary` synchronously from a trace.
+
+    Covers tool counts, latency percentiles, and cost estimate (via pricing.toml).
+    ``hallucination_rate`` is left as ``0.0`` — compute it on demand with
+    :class:`~agent_eval.metrics.hallucination.HallucinationDetector`.
+    """
+    # Tool metrics
+    all_calls = [tc for turn in trace.turns for tc in turn.tool_calls]
+    total_tc = len(all_calls)
+    successful_tc = sum(1 for tc in all_calls if tc.success)
+    tool_success_rate = successful_tc / total_tc if total_tc > 0 else 0.0
+
+    # Latency
+    turn_latencies = [t.latency_ms for t in trace.turns]
+    total_ms = sum(turn_latencies)
+    if turn_latencies:
+        sorted_lat = sorted(turn_latencies)
+        p50_ms = int(statistics.median(sorted_lat))
+        idx95 = max(0, int(len(sorted_lat) * 0.95) - 1)
+        p95_ms = sorted_lat[idx95]
+    else:
+        p50_ms = p95_ms = 0
+
+    # Cost estimate (mirrors CostCalculator logic; avoids async overhead at write time)
+    _pricing_path = Path(__file__).parent.parent / "data" / "pricing.toml"
+    cost_usd = 0.0
+    try:
+        with open(_pricing_path, "rb") as _f:
+            _pricing = tomllib.load(_f)
+        _model_cfg = _pricing.get("models", {}).get(trace.model, {})
+        _input_rate = _model_cfg.get("input_per_1m", 0.0)
+        _output_rate = _model_cfg.get("output_per_1m", 0.0)
+        _total_input = sum(t.tokens.prompt_tokens for t in trace.turns)
+        _total_output = sum(t.tokens.completion_tokens for t in trace.turns)
+        cost_usd = (_total_input * _input_rate + _total_output * _output_rate) / 1_000_000
+    except Exception:
+        pass
+
+    return RunSummary(
+        turn_count=len(trace.turns),
+        total_tool_calls=total_tc,
+        successful_tool_calls=successful_tc,
+        failed_tool_calls=total_tc - successful_tc,
+        tool_success_rate=tool_success_rate,
+        hallucination_rate=0.0,
+        total_latency_ms=total_ms,
+        p50_turn_latency_ms=p50_ms,
+        p95_turn_latency_ms=p95_ms,
+        estimated_cost_usd=cost_usd,
+    )
 
 
 class TraceWriterConfig(BaseModel):
@@ -46,7 +102,10 @@ class TraceWriter:
     def write(self, trace: Trace) -> Path:
         """Write trace to disk synchronously. Returns the file path."""
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
-        truncated = self._apply_truncation(trace)
+        # Compute summary and attach before truncation (truncation only trims text,
+        # not metrics data, so computing from the original trace is correct).
+        trace_with_summary = trace.model_copy(update={"summary": _compute_run_summary(trace)})
+        truncated = self._apply_truncation(trace_with_summary)
         output_path = self.config.output_dir / f"{trace.run_id}.json"
         json_str = truncated.model_dump_json(indent=2)
         # Check size limit
@@ -66,7 +125,8 @@ class TraceWriter:
         import aiofiles
 
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
-        truncated = self._apply_truncation(trace)
+        trace_with_summary = trace.model_copy(update={"summary": _compute_run_summary(trace)})
+        truncated = self._apply_truncation(trace_with_summary)
         output_path = self.config.output_dir / f"{trace.run_id}.json"
         json_str = truncated.model_dump_json(indent=2)
         size_mb = len(json_str.encode()) / (1024 * 1024)

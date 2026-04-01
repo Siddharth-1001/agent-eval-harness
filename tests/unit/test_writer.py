@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent_eval.tracer.schema import ToolCall, Trace, Turn
-from agent_eval.tracer.writer import TraceWriter, TraceWriterConfig
+from agent_eval.tracer.schema import TokenCount, ToolCall, Trace, Turn
+from agent_eval.tracer.writer import TraceWriter, TraceWriterConfig, _compute_run_summary
 
 
 def make_trace_with_long_content(content_len: int = 100, output_len: int = 100) -> Trace:
@@ -155,3 +155,108 @@ class TestTraceWriterAsync:
         data = json.loads(path.read_text())
         output = data["turns"][0]["tool_calls"][0]["output"]
         assert "[truncated" in output
+
+
+# ── _compute_run_summary ──────────────────────────────────────────────────────
+
+
+class TestComputeRunSummary:
+    def _make_trace(self, *, success: bool = True, latency_ms: int = 100) -> Trace:
+        call = ToolCall(tool_name="search", input_args={}, success=success, latency_ms=latency_ms)
+        turn = Turn(
+            turn_id=0,
+            role="assistant",
+            content="resp",
+            latency_ms=latency_ms,
+            tool_calls=[call],
+            tokens=TokenCount(prompt_tokens=10, completion_tokens=5),
+        )
+        return Trace(model="gpt-4o", turns=[turn])
+
+    def test_summary_tool_counts(self):
+        trace = self._make_trace(success=True)
+        summary = _compute_run_summary(trace)
+        assert summary.total_tool_calls == 1
+        assert summary.successful_tool_calls == 1
+        assert summary.failed_tool_calls == 0
+        assert summary.tool_success_rate == 1.0
+
+    def test_summary_failed_tool(self):
+        trace = self._make_trace(success=False)
+        summary = _compute_run_summary(trace)
+        assert summary.successful_tool_calls == 0
+        assert summary.failed_tool_calls == 1
+        assert summary.tool_success_rate == 0.0
+
+    def test_summary_no_tool_calls_success_rate_zero(self):
+        trace = Trace(model="m", turns=[Turn(turn_id=0, role="user", content="hi")])
+        summary = _compute_run_summary(trace)
+        assert summary.total_tool_calls == 0
+        assert summary.tool_success_rate == 0.0
+
+    def test_summary_latency_fields(self):
+        trace = self._make_trace(latency_ms=200)
+        summary = _compute_run_summary(trace)
+        assert summary.total_latency_ms == 200
+        assert summary.p50_turn_latency_ms == 200
+        assert summary.p95_turn_latency_ms == 200
+
+    def test_summary_empty_trace_latency(self):
+        trace = Trace(model="m", turns=[])
+        summary = _compute_run_summary(trace)
+        assert summary.total_latency_ms == 0
+        assert summary.p50_turn_latency_ms == 0
+        assert summary.p95_turn_latency_ms == 0
+
+    def test_summary_turn_count(self):
+        trace = self._make_trace()
+        summary = _compute_run_summary(trace)
+        assert summary.turn_count == 1
+
+    def test_summary_hallucination_rate_is_zero(self):
+        """hallucination_rate is always 0.0 at write time (computed on demand)."""
+        trace = self._make_trace()
+        summary = _compute_run_summary(trace)
+        assert summary.hallucination_rate == 0.0
+
+    def test_summary_cost_estimated_for_known_model(self):
+        """Cost is estimated from pricing.toml for known models."""
+        call = ToolCall(tool_name="t", input_args={}, success=True, latency_ms=0)
+        turn = Turn(
+            turn_id=0,
+            role="assistant",
+            content="hi",
+            tool_calls=[call],
+            tokens=TokenCount(prompt_tokens=1000, completion_tokens=500),
+        )
+        # gpt-4o is listed in pricing.toml
+        trace = Trace(model="gpt-4o", turns=[turn])
+        summary = _compute_run_summary(trace)
+        assert summary.estimated_cost_usd >= 0.0  # cost is non-negative
+
+    def test_summary_cost_zero_for_unknown_model(self):
+        """Unknown models get zero cost (no pricing data)."""
+        trace = Trace(model="no-such-model-xyz", turns=[])
+        summary = _compute_run_summary(trace)
+        assert summary.estimated_cost_usd == 0.0
+
+    def test_write_populates_summary_field(self, tmp_path: Path):
+        """write() embeds the RunSummary in the JSON file."""
+        config = TraceWriterConfig(output_dir=tmp_path)
+        writer = TraceWriter(config)
+        trace = self._make_trace()
+        path = writer.write(trace)
+        data = json.loads(path.read_text())
+        assert data["summary"] is not None
+        assert data["summary"]["total_tool_calls"] == 1
+        assert data["summary"]["tool_success_rate"] == 1.0
+
+    async def test_async_write_populates_summary_field(self, tmp_path: Path):
+        """async_write() also embeds the RunSummary in the JSON file."""
+        config = TraceWriterConfig(output_dir=tmp_path)
+        writer = TraceWriter(config)
+        trace = self._make_trace()
+        path = await writer.async_write(trace)
+        data = json.loads(path.read_text())
+        assert data["summary"] is not None
+        assert data["summary"]["total_tool_calls"] == 1

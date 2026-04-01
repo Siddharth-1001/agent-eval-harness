@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -88,7 +90,7 @@ def run(
 
     env = {**__import__("os").environ, "AGENT_EVAL_TRACES_DIR": str(output_dir)}
     result = subprocess.run(
-        ["uv", "run", "python", str(task_path)],
+        [sys.executable, str(task_path)],
         env=env,
     )
 
@@ -278,12 +280,12 @@ def dashboard(
     td = _resolve_traces_dir(traces_dir)
     td.mkdir(parents=True, exist_ok=True)
 
-    console.print(f"[bold green]Starting dashboard[/bold green] on http://0.0.0.0:{port}")
+    console.print(f"[bold green]Starting dashboard[/bold green] on http://127.0.0.1:{port}")
     console.print(f"Traces directory: {td}")
     console.print("Press Ctrl+C to stop.")
 
     dash_app = create_app(td)
-    uvicorn.run(dash_app, host="0.0.0.0", port=port)
+    uvicorn.run(dash_app, host="127.0.0.1", port=port)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -371,6 +373,16 @@ def _render_compare_html(run_id_a, run_id_b, trace_a, trace_b, ma, mb, rows) -> 
 
         return re.sub(r"\[/?[^\]]+\]", "", s)
 
+    # Escape all user-controlled strings before embedding in HTML
+    e_id_a = html.escape(run_id_a)
+    e_id_a8 = html.escape(run_id_a[:8])
+    e_id_b = html.escape(run_id_b)
+    e_id_b8 = html.escape(run_id_b[:8])
+    e_task_a = html.escape(trace_a.task or "unknown")
+    e_model_a = html.escape(trace_a.model or "unknown")
+    e_task_b = html.escape(trace_b.task or "unknown")
+    e_model_b = html.escape(trace_b.model or "unknown")
+
     rows_html = ""
     for metric_name, val_a, val_b, delta_str in rows:
         delta_clean = strip_markup(delta_str)
@@ -393,7 +405,7 @@ def _render_compare_html(run_id_a, run_id_b, trace_a, trace_b, ma, mb, rows) -> 
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <title>agent-eval comparison: {run_id_a[:8]} vs {run_id_b[:8]}</title>
+  <title>agent-eval comparison: {e_id_a8} vs {e_id_b8}</title>
   <style>
     body {{ font-family: monospace; background: #111827; color: #e5e7eb; margin: 2rem; }}
     h1 {{ color: #60a5fa; }}
@@ -409,15 +421,15 @@ def _render_compare_html(run_id_a, run_id_b, trace_a, trace_b, ma, mb, rows) -> 
 <body>
   <h1>agent-eval: Run Comparison</h1>
   <div class="meta">
-    <span class="run-a">A: {run_id_a} — {trace_a.task or "unknown"} ({trace_a.model})</span><br/>
-    <span class="run-b">B: {run_id_b} — {trace_b.task or "unknown"} ({trace_b.model})</span>
+    <span class="run-a">A: {e_id_a} — {e_task_a} ({e_model_a})</span><br/>
+    <span class="run-b">B: {e_id_b} — {e_task_b} ({e_model_b})</span>
   </div>
   <table>
     <thead>
       <tr>
         <th>Metric</th>
-        <th class="run-a">A: {run_id_a[:8]}</th>
-        <th class="run-b">B: {run_id_b[:8]}</th>
+        <th class="run-a">A: {e_id_a8}</th>
+        <th class="run-b">B: {e_id_b8}</th>
         <th>Delta (B - A)</th>
       </tr>
     </thead>

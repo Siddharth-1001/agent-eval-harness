@@ -20,6 +20,7 @@ class _EvalCallbackHandler:
         self._collector = collector
         self._tool_start_times: dict[str, float] = {}
         self._tool_inputs: dict[str, dict[str, Any]] = {}
+        self._tool_names: dict[str, str] = {}
         self._current_turn_id: int | None = None
 
     def on_llm_start(self, serialized: dict[str, Any], prompts: list[str], **kwargs: Any) -> None:
@@ -60,6 +61,10 @@ class _EvalCallbackHandler:
                 self._tool_inputs[run_key] = {"input": input_str}
         except Exception:
             self._tool_inputs[run_key] = {"input": input_str}
+        # Store tool name so on_tool_error can recover it
+        tool_name = serialized.get("name", "") or kwargs.get("name", "")
+        if tool_name:
+            self._tool_names[run_key] = str(tool_name)
 
     def on_tool_end(
         self,
@@ -72,6 +77,7 @@ class _EvalCallbackHandler:
         start_time = self._tool_start_times.pop(run_key, time.monotonic())
         latency_ms = int((time.monotonic() - start_time) * 1000)
         input_args = self._tool_inputs.pop(run_key, {})
+        self._tool_names.pop(run_key, None)  # clean up stored name
 
         tool_call = ToolCall(
             tool_name=name or "unknown",
@@ -94,9 +100,11 @@ class _EvalCallbackHandler:
         start_time = self._tool_start_times.pop(run_key, time.monotonic())
         latency_ms = int((time.monotonic() - start_time) * 1000)
         input_args = self._tool_inputs.pop(run_key, {})
+        # Recover tool name stored during on_tool_start; fall back to kwargs
+        tool_name = self._tool_names.pop(run_key, None) or kwargs.get("name", "unknown")
 
         tool_call = ToolCall(
-            tool_name="unknown",
+            tool_name=tool_name,
             input_args=input_args,
             output=str(error),
             success=False,

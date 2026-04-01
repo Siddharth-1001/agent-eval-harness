@@ -125,3 +125,43 @@ async def test_detector_schema_mode_no_flags_on_valid_call():
 
     assert metrics.total_flags == 0
     assert call.hallucination_flags == []
+
+
+def test_boolean_is_not_accepted_as_integer():
+    """True/False must not pass an 'integer' type check (bool is a subclass of int)."""
+    schema = {
+        "required": [],
+        "properties": {
+            "count": {"type": "integer"},
+        },
+    }
+    call = make_call("tool", {"count": True})
+    flags = _schema_check(call, schema)
+    assert len(flags) == 1
+    assert flags[0].argument_name == "count"
+
+
+def test_boolean_is_accepted_for_boolean_type():
+    """True/False must still pass a 'boolean' type check."""
+    schema = {
+        "required": [],
+        "properties": {
+            "enabled": {"type": "boolean"},
+        },
+    }
+    call = make_call("tool", {"enabled": True})
+    flags = _schema_check(call, schema)
+    assert flags == []
+
+
+def test_integer_is_not_accepted_for_boolean_type():
+    """An integer (1) must not satisfy a 'boolean' type constraint."""
+    schema = {
+        "required": [],
+        "properties": {
+            "enabled": {"type": "boolean"},
+        },
+    }
+    call = make_call("tool", {"enabled": 1})
+    flags = _schema_check(call, schema)
+    assert len(flags) == 1

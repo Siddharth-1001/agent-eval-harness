@@ -37,7 +37,9 @@ def create_app(traces_dir: Path) -> FastAPI:
 
     def _load_trace_json(run_id: str) -> dict[str, Any]:
         """Load raw trace dict or raise HTTPException(404)."""
-        paths = list(traces_dir.glob(f"{run_id}*.json"))
+        # Strip any path separators to prevent directory traversal attacks
+        safe_id = Path(run_id).name
+        paths = list(traces_dir.glob(f"{safe_id}*.json"))
         if not paths:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
         return json.loads(paths[0].read_text(encoding="utf-8"))

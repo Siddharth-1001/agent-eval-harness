@@ -118,3 +118,101 @@ class TestTraceOpenaiAgent:
 
             result = await my_agent("input")
             assert result == "result"
+
+
+class TestEvalRunHooks:
+    """Tests for EvalRunHooks — the openai-agents RunHooks implementation."""
+
+    @pytest.mark.asyncio
+    async def test_on_tool_start_and_end_records_tool_call(self, writer_config):
+        """on_tool_start + on_tool_end pair creates a tool turn with a ToolCall."""
+        from agent_eval.adapters.openai_agents import EvalRunHooks
+        from agent_eval.tracer.collector import TraceCollector
+
+        collector = TraceCollector(model="gpt-4o", task="t")
+        hooks = EvalRunHooks(collector)
+
+        fake_tool = type("Tool", (), {"name": "search"})()
+        await hooks.on_tool_start(None, None, fake_tool)
+        await hooks.on_tool_end(None, None, fake_tool, "search results")
+
+        trace = collector.finalize()
+        tool_turns = [t for t in trace.turns if t.role == "tool"]
+        assert len(tool_turns) == 1
+        assert len(tool_turns[0].tool_calls) == 1
+        assert tool_turns[0].tool_calls[0].tool_name == "search"
+        assert tool_turns[0].tool_calls[0].output == "search results"
+        assert tool_turns[0].tool_calls[0].success is True
+
+    @pytest.mark.asyncio
+    async def test_on_tool_end_without_start_is_noop(self):
+        """Calling on_tool_end without a matching on_tool_start does not crash."""
+        from agent_eval.adapters.openai_agents import EvalRunHooks
+        from agent_eval.tracer.collector import TraceCollector
+
+        collector = TraceCollector(model="gpt-4o")
+        hooks = EvalRunHooks(collector)
+        fake_tool = type("Tool", (), {"name": "tool"})()
+        # Should not raise
+        await hooks.on_tool_end(None, None, fake_tool, "result")
+
+    @pytest.mark.asyncio
+    async def test_multiple_sequential_tool_calls_are_all_recorded(self, writer_config):
+        """Multiple sequential tool call pairs are each recorded correctly (FIFO)."""
+        from agent_eval.adapters.openai_agents import EvalRunHooks
+        from agent_eval.tracer.collector import TraceCollector
+
+        collector = TraceCollector(model="gpt-4o")
+        hooks = EvalRunHooks(collector)
+
+        for name, result in [("search", "r1"), ("fetch", "r2"), ("store", "r3")]:
+            fake_tool = type("T", (), {"name": name})()
+            await hooks.on_tool_start(None, None, fake_tool)
+            await hooks.on_tool_end(None, None, fake_tool, result)
+
+        trace = collector.finalize()
+        tool_calls = [tc for t in trace.turns for tc in t.tool_calls]
+        assert len(tool_calls) == 3
+        assert [tc.tool_name for tc in tool_calls] == ["search", "fetch", "store"]
+
+    @pytest.mark.asyncio
+    async def test_no_op_hooks_do_not_raise(self):
+        """on_agent_start, on_agent_end, and on_handoff don't raise."""
+        from agent_eval.adapters.openai_agents import EvalRunHooks
+        from agent_eval.tracer.collector import TraceCollector
+
+        hooks = EvalRunHooks(TraceCollector(model="m"))
+        await hooks.on_agent_start(None, None)
+        await hooks.on_agent_end(None, None, "output")
+        await hooks.on_handoff(None, None, None)
+
+
+class TestPatchRunnerOnce:
+    def test_patch_runner_once_is_noop_when_package_missing(self):
+        """_patch_runner_once does nothing (no error) when openai_agents isn't installed."""
+        import sys
+        from unittest.mock import patch
+
+        from agent_eval.adapters import openai_agents as oa_module
+
+        original = oa_module._RUNNER_PATCHED
+        try:
+            oa_module._RUNNER_PATCHED = False
+            with patch.dict("sys.modules", {"openai_agents": None}):
+                oa_module._patch_runner_once()  # must not raise
+        finally:
+            oa_module._RUNNER_PATCHED = original
+
+    def test_patch_runner_once_called_twice_is_idempotent(self):
+        """Calling _patch_runner_once twice doesn't re-patch or raise."""
+        import sys
+        from unittest.mock import patch
+
+        from agent_eval.adapters import openai_agents as oa_module
+
+        original = oa_module._RUNNER_PATCHED
+        try:
+            oa_module._RUNNER_PATCHED = True  # simulate already patched
+            oa_module._patch_runner_once()  # should be a no-op
+        finally:
+            oa_module._RUNNER_PATCHED = original

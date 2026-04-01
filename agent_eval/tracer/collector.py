@@ -8,7 +8,19 @@ from agent_eval.tracer.schema import TokenCount, ToolCall, Trace, Turn
 
 
 class TraceCollector:
-    """Stateful event buffer that accumulates trace data during an agent run."""
+    """Stateful event buffer that accumulates trace data during an agent run.
+
+    Thread-safety note
+    ------------------
+    The sync methods (``start_turn``, ``record_tool_call``, ``end_turn``,
+    ``finalize``) are **not** thread-safe.  They are designed for single-threaded
+    synchronous agent runtimes.
+
+    The async methods (``async_start_turn`` etc.) are coroutine-safe: they
+    acquire an ``asyncio.Lock`` before mutating shared state, which prevents
+    interleaving in a single event loop.  Do not call sync methods concurrently
+    from multiple threads when an async task may also be running.
+    """
 
     def __init__(
         self,

@@ -161,3 +161,187 @@ async def test_hallucination_rate_computed_correctly_with_judge():
     # 2 flags (one per call), 2 total calls => rate = 1.0
     assert metrics.total_flags == 2
     assert metrics.hallucination_rate == pytest.approx(1.0)
+
+
+# ── _build_judge_prompt ───────────────────────────────────────────────────────
+
+
+def test_build_judge_prompt_contains_tool_name():
+    from agent_eval.metrics.hallucination import _build_judge_prompt
+
+    call = make_call("search_db", {"query": "hello", "limit": 10})
+    prompt = _build_judge_prompt(call, "Find recent records")
+    assert "search_db" in prompt
+    assert "query" in prompt
+    assert "Find recent records" in prompt
+
+
+def test_build_judge_prompt_no_context():
+    from agent_eval.metrics.hallucination import _build_judge_prompt
+
+    call = make_call("tool", {})
+    prompt = _build_judge_prompt(call, "")
+    assert "No context provided" in prompt
+
+
+def test_build_judge_prompt_no_args():
+    from agent_eval.metrics.hallucination import _build_judge_prompt
+
+    call = make_call("tool", {})
+    prompt = _build_judge_prompt(call, "ctx")
+    assert "(no arguments)" in prompt
+
+
+# ── _parse_judge_response ─────────────────────────────────────────────────────
+
+
+def test_parse_judge_response_none_returns_empty():
+    from agent_eval.metrics.hallucination import _parse_judge_response
+
+    call = make_call("tool", {})
+    flags = _parse_judge_response("NONE", call, sensitivity=0.7)
+    assert flags == []
+
+
+def test_parse_judge_response_valid_hallucination_line():
+    from agent_eval.metrics.hallucination import _parse_judge_response
+
+    raw = "HALLUCINATION: city | expected: a real city | received: Narnia | confidence: 0.9"
+    call = make_call("tool", {"city": "Narnia"})
+    flags = _parse_judge_response(raw, call, sensitivity=0.7)
+    assert len(flags) == 1
+    assert flags[0].argument_name == "city"
+    assert flags[0].confidence == pytest.approx(0.9)
+    assert flags[0].method == "llm_judge"
+
+
+def test_parse_judge_response_below_sensitivity_filtered():
+    from agent_eval.metrics.hallucination import _parse_judge_response
+
+    raw = "HALLUCINATION: city | expected: real | received: Narnia | confidence: 0.5"
+    call = make_call("tool", {"city": "Narnia"})
+    flags = _parse_judge_response(raw, call, sensitivity=0.8)
+    assert flags == []
+
+
+def test_parse_judge_response_malformed_line_skipped():
+    from agent_eval.metrics.hallucination import _parse_judge_response
+
+    raw = "HALLUCINATION: only_one_part"
+    call = make_call("tool", {})
+    flags = _parse_judge_response(raw, call, sensitivity=0.5)
+    assert flags == []
+
+
+def test_parse_judge_response_multiple_lines():
+    from agent_eval.metrics.hallucination import _parse_judge_response
+
+    raw = (
+        "HALLUCINATION: a | expected: x | received: y | confidence: 0.9\n"
+        "HALLUCINATION: b | expected: p | received: q | confidence: 0.8\n"
+    )
+    call = make_call("tool", {"a": "y", "b": "q"})
+    flags = _parse_judge_response(raw, call, sensitivity=0.7)
+    assert len(flags) == 2
+    assert {f.argument_name for f in flags} == {"a", "b"}
+
+
+# ── AnthropicLLMJudge (mocked) ────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_judge_returns_flags():
+    """AnthropicLLMJudge calls the Anthropic API and parses the structured response."""
+    import sys
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_content_block = MagicMock()
+    mock_content_block.text = (
+        "HALLUCINATION: city | expected: real city | received: Narnia | confidence: 0.95"
+    )
+    mock_response = MagicMock()
+    mock_response.content = [mock_content_block]
+
+    mock_client = AsyncMock()
+    mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+    mock_anthropic_module = MagicMock()
+    mock_anthropic_module.AsyncAnthropic.return_value = mock_client
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setitem(sys.modules, "anthropic", mock_anthropic_module)
+        from agent_eval.metrics.hallucination import AnthropicLLMJudge
+
+        judge = AnthropicLLMJudge(api_key="test-key", model="claude-haiku-4-5")
+        call = make_call("lookup", {"city": "Narnia"})
+        flags = await judge.judge(call, "Look up city details", "claude-haiku-4-5", 0.7)
+
+    assert len(flags) == 1
+    assert flags[0].argument_name == "city"
+    assert flags[0].method == "llm_judge"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_llm_judge_import_error():
+    """AnthropicLLMJudge raises ImportError when anthropic is not installed."""
+    import sys
+    from unittest.mock import patch
+
+    from agent_eval.metrics.hallucination import AnthropicLLMJudge
+
+    with patch.dict("sys.modules", {"anthropic": None}):
+        judge = AnthropicLLMJudge()
+        call = make_call("tool", {})
+        with pytest.raises(ImportError, match="anthropic"):
+            await judge.judge(call, "", "claude-haiku-4-5", 0.7)
+
+
+# ── OpenAILLMJudge (mocked) ───────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_openai_llm_judge_returns_flags():
+    """OpenAILLMJudge calls the OpenAI API and parses the structured response."""
+    import sys
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_message = MagicMock()
+    mock_message.content = (
+        "HALLUCINATION: country | expected: real country | received: Mordor | confidence: 0.88"
+    )
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    mock_client = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    mock_openai_module = MagicMock()
+    mock_openai_module.AsyncOpenAI.return_value = mock_client
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setitem(sys.modules, "openai", mock_openai_module)
+        from agent_eval.metrics.hallucination import OpenAILLMJudge
+
+        judge = OpenAILLMJudge(api_key="test-key", model="gpt-4o-mini")
+        call = make_call("geocode", {"country": "Mordor"})
+        flags = await judge.judge(call, "Geocode the location", "gpt-4o-mini", 0.7)
+
+    assert len(flags) == 1
+    assert flags[0].argument_name == "country"
+    assert flags[0].method == "llm_judge"
+
+
+@pytest.mark.asyncio
+async def test_openai_llm_judge_import_error():
+    """OpenAILLMJudge raises ImportError when openai is not installed."""
+    from unittest.mock import patch
+
+    from agent_eval.metrics.hallucination import OpenAILLMJudge
+
+    with patch.dict("sys.modules", {"openai": None}):
+        judge = OpenAILLMJudge()
+        call = make_call("tool", {})
+        with pytest.raises(ImportError, match="openai"):
+            await judge.judge(call, "", "gpt-4o-mini", 0.7)
