@@ -14,7 +14,7 @@ class ToolHallucinationConfig(BaseModel):
     """Per-tool hallucination detection configuration."""
 
     mode: str = "schema"  # "schema" | "semantic" | "llm_judge"
-    schema: dict[str, Any] | None = None  # JSON schema for the tool's input_args
+    json_schema: dict[str, Any] | None = None  # JSON schema for the tool's input_args
     value_sets: dict[str, list[Any]] | None = None  # for semantic mode
     judge_model: str = "claude-haiku-4-5"  # for llm_judge mode
     sensitivity: float = 0.7  # for llm_judge mode, confidence threshold
@@ -152,13 +152,13 @@ class HallucinationDetector:
         flags: list[HallucinationFlag] = []
 
         if tool_config.mode == "schema":
-            flags.extend(_schema_check(call, tool_config.schema))
+            flags.extend(_schema_check(call, tool_config.json_schema))
         elif tool_config.mode == "semantic":
-            flags.extend(_schema_check(call, tool_config.schema))
+            flags.extend(_schema_check(call, tool_config.json_schema))
             if tool_config.value_sets:
                 flags.extend(_semantic_check(call, tool_config.value_sets))
         elif tool_config.mode == "llm_judge":
-            flags.extend(_schema_check(call, tool_config.schema))
+            flags.extend(_schema_check(call, tool_config.json_schema))
             judge_flags = await self._llm_judge.judge(
                 call, turn_content, tool_config.judge_model, tool_config.sensitivity
             )
@@ -167,7 +167,12 @@ class HallucinationDetector:
         return flags
 
     async def analyze(self, trace: Trace) -> HallucinationMetrics:
-        """Run detection on all tool calls in the trace, mutating hallucination_flags in place."""
+        """Run detection on all tool calls in the trace.
+
+        Note: This method appends hallucination_flags to ToolCall objects in-place
+        so the trace can be persisted with flags attached. If you need the original
+        trace unmodified, pass a deep copy.
+        """
         total_calls = 0
         total_flags = 0
         flags_by_tool: dict[str, int] = {}
@@ -231,7 +236,7 @@ def _parse_judge_response(
         if not line.startswith("HALLUCINATION:"):
             continue
         try:
-            body = line[len("HALLUCINATION:"):].strip()
+            body = line[len("HALLUCINATION:") :].strip()
             parts = [p.strip() for p in body.split("|")]
             if len(parts) < 4:
                 continue

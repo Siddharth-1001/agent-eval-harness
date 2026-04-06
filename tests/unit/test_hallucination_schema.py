@@ -94,7 +94,7 @@ async def test_detector_schema_mode_flags_missing_required():
         "required": ["path"],
         "properties": {"path": {"type": "string"}},
     }
-    tool_config = ToolHallucinationConfig(mode="schema", schema=schema)
+    tool_config = ToolHallucinationConfig(mode="schema", json_schema=schema)
     call = make_call("read_file", {})  # missing 'path'
     turn = Turn(turn_id=0, role="assistant", content="content", tool_calls=[call])
     config = HallucinationConfig(tools={"read_file": tool_config})
@@ -114,7 +114,7 @@ async def test_detector_schema_mode_no_flags_on_valid_call():
         "required": ["path"],
         "properties": {"path": {"type": "string"}},
     }
-    tool_config = ToolHallucinationConfig(mode="schema", schema=schema)
+    tool_config = ToolHallucinationConfig(mode="schema", json_schema=schema)
     call = make_call("read_file", {"path": "/tmp/file.txt"})
     turn = Turn(turn_id=0, role="assistant", content="content", tool_calls=[call])
     config = HallucinationConfig(tools={"read_file": tool_config})

@@ -82,7 +82,9 @@ async def test_detector_semantic_mode_with_schema_and_value_sets():
         },
     }
     value_sets = {"color": ["red", "green", "blue"]}
-    tool_config = ToolHallucinationConfig(mode="semantic", schema=schema, value_sets=value_sets)
+    tool_config = ToolHallucinationConfig(
+        mode="semantic", json_schema=schema, value_sets=value_sets
+    )
     # Missing 'size' (schema violation) + invalid color (semantic violation)
     call = make_call("paint", {"color": "purple"})
     turn = Turn(turn_id=0, role="assistant", content="paint", tool_calls=[call])

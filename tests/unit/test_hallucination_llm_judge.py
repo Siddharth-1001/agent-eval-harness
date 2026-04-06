@@ -124,7 +124,7 @@ async def test_llm_judge_mode_also_runs_schema_check():
     }
     tool_config = ToolHallucinationConfig(
         mode="llm_judge",
-        schema=schema,
+        json_schema=schema,
         judge_model="claude-haiku-4-5",
     )
     call = make_call("tool", {})  # missing required_arg
@@ -284,7 +284,6 @@ async def test_anthropic_llm_judge_returns_flags():
 @pytest.mark.asyncio
 async def test_anthropic_llm_judge_import_error():
     """AnthropicLLMJudge raises ImportError when anthropic is not installed."""
-    import sys
     from unittest.mock import patch
 
     from agent_eval.metrics.hallucination import AnthropicLLMJudge
