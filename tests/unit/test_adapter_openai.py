@@ -190,7 +190,6 @@ class TestEvalRunHooks:
 class TestPatchRunnerOnce:
     def test_patch_runner_once_is_noop_when_package_missing(self):
         """_patch_runner_once does nothing (no error) when openai_agents isn't installed."""
-        import sys
         from unittest.mock import patch
 
         from agent_eval.adapters import openai_agents as oa_module
@@ -205,8 +204,6 @@ class TestPatchRunnerOnce:
 
     def test_patch_runner_once_called_twice_is_idempotent(self):
         """Calling _patch_runner_once twice doesn't re-patch or raise."""
-        import sys
-        from unittest.mock import patch
 
         from agent_eval.adapters import openai_agents as oa_module
 
