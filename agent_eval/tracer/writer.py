@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import functools
+import logging
 import statistics
 import tomllib
 from pathlib import Path
@@ -7,6 +9,20 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from agent_eval.tracer.schema import RunSummary, Trace
+
+logger = logging.getLogger("agent_eval.writer")
+
+
+@functools.cache
+def _load_pricing() -> dict:
+    """Load pricing.toml once and cache it for the process lifetime."""
+    pricing_path = Path(__file__).parent.parent / "data" / "pricing.toml"
+    try:
+        with open(pricing_path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        logger.warning("Could not load pricing.toml; cost estimates will be zero")
+        return {}
 
 
 def _compute_run_summary(trace: Trace) -> RunSummary:
@@ -35,11 +51,9 @@ def _compute_run_summary(trace: Trace) -> RunSummary:
         p50_ms = p95_ms = 0
 
     # Cost estimate (mirrors CostCalculator logic; avoids async overhead at write time)
-    _pricing_path = Path(__file__).parent.parent / "data" / "pricing.toml"
     cost_usd = 0.0
     try:
-        with open(_pricing_path, "rb") as _f:
-            _pricing = tomllib.load(_f)
+        _pricing = _load_pricing()
         _model_cfg = _pricing.get("models", {}).get(trace.model, {})
         _input_rate = _model_cfg.get("input_per_1m", 0.0)
         _output_rate = _model_cfg.get("output_per_1m", 0.0)
@@ -47,7 +61,7 @@ def _compute_run_summary(trace: Trace) -> RunSummary:
         _total_output = sum(t.tokens.completion_tokens for t in trace.turns)
         cost_usd = (_total_input * _input_rate + _total_output * _output_rate) / 1_000_000
     except Exception:
-        pass
+        logger.debug("Cost estimation failed for model %s", trace.model)
 
     return RunSummary(
         turn_count=len(trace.turns),

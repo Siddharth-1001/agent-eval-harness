@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -10,9 +12,12 @@ from pydantic import BaseModel
 
 from agent_eval.tracer.schema import Trace
 
+logger = logging.getLogger("agent_eval.cost")
+
 _PRICING_PATH = Path(__file__).parent.parent / "data" / "pricing.toml"
 
 
+@functools.cache
 def _load_pricing() -> dict[str, Any]:
     with open(_PRICING_PATH, "rb") as f:
         return tomllib.load(f)
