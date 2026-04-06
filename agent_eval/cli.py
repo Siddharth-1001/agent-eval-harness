@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -13,6 +15,8 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
+
+logger = logging.getLogger("agent_eval.cli")
 
 app = typer.Typer(
     name="agent-eval",
@@ -26,6 +30,9 @@ err_console = Console(stderr=True)
 
 DEFAULT_TRACES_DIR = Path("~/.agent-eval/traces/")
 
+# Only allow UUIDs or valid prefixes (hex + hyphens) to prevent path injection
+_RUN_ID_RE = re.compile(r"^[a-fA-F0-9\-]{1,36}$")
+
 
 def _resolve_traces_dir(traces_dir: Path) -> Path:
     return traces_dir.expanduser().resolve()
@@ -35,9 +42,13 @@ def _load_trace(run_id: str, traces_dir: Path):
     """Load a single trace by run_id. Returns Trace or None."""
     from agent_eval.tracer.schema import Trace
 
+    # Sanitize run_id to prevent path traversal
+    if not _RUN_ID_RE.match(run_id):
+        logger.warning("Invalid run_id format rejected: %s", run_id[:50])
+        return None
     td = _resolve_traces_dir(traces_dir)
-    # Accept full run_id or prefix
-    candidates = list(td.glob(f"{run_id}*.json"))
+    safe_id = Path(run_id).name  # strip any remaining path components
+    candidates = list(td.glob(f"{safe_id}*.json"))
     if not candidates:
         return None
     return Trace.model_validate_json(candidates[0].read_text(encoding="utf-8"))
@@ -50,12 +61,13 @@ def _list_traces(traces_dir: Path):
     td = _resolve_traces_dir(traces_dir)
     if not td.exists():
         return []
-    import contextlib
 
     traces = []
     for f in sorted(td.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-        with contextlib.suppress(Exception):
+        try:
             traces.append(Trace.model_validate_json(f.read_text(encoding="utf-8")))
+        except Exception:
+            logger.warning("Skipping invalid trace file: %s", f.name)
     return traces
 
 
