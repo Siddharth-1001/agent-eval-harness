@@ -1,4 +1,9 @@
 # Pricing in USD per 1M tokens
+# Last updated: 2026-04-06
+# Source: Official provider pricing pages
+# To override at runtime, use MetricsConfig(pricing_overrides={...})
+
+# ── Anthropic ─────────────────────────────────────────────────────────────────
 [models."claude-opus-4-6"]
 input_per_1m  = 15.00
 output_per_1m = 75.00
@@ -11,6 +16,15 @@ output_per_1m = 15.00
 input_per_1m  = 0.80
 output_per_1m = 4.00
 
+[models."claude-4-opus"]
+input_per_1m  = 15.00
+output_per_1m = 75.00
+
+[models."claude-4-sonnet"]
+input_per_1m  = 3.00
+output_per_1m = 15.00
+
+# ── OpenAI ────────────────────────────────────────────────────────────────────
 [models."gpt-4o"]
 input_per_1m  = 2.50
 output_per_1m = 10.00
@@ -23,6 +37,27 @@ output_per_1m = 0.60
 input_per_1m  = 10.00
 output_per_1m = 30.00
 
+[models."gpt-4.5-preview"]
+input_per_1m  = 75.00
+output_per_1m = 150.00
+
+[models."o1"]
+input_per_1m  = 15.00
+output_per_1m = 60.00
+
+[models."o1-mini"]
+input_per_1m  = 3.00
+output_per_1m = 12.00
+
+[models."o3"]
+input_per_1m  = 10.00
+output_per_1m = 40.00
+
+[models."o3-mini"]
+input_per_1m  = 1.10
+output_per_1m = 4.40
+
+# ── Google ────────────────────────────────────────────────────────────────────
 [models."gemini-1.5-pro"]
 input_per_1m  = 1.25
 output_per_1m = 5.00
@@ -31,6 +66,23 @@ output_per_1m = 5.00
 input_per_1m  = 0.075
 output_per_1m = 0.30
 
+[models."gemini-2.0-pro"]
+input_per_1m  = 1.25
+output_per_1m = 5.00
+
+[models."gemini-2.0-flash"]
+input_per_1m  = 0.10
+output_per_1m = 0.40
+
+[models."gemini-2.5-pro"]
+input_per_1m  = 1.25
+output_per_1m = 10.00
+
+[models."gemini-2.5-flash"]
+input_per_1m  = 0.15
+output_per_1m = 0.60
+
+# ── Meta (typical hosted pricing) ────────────────────────────────────────────
 [models."llama-3.3-70b"]
 input_per_1m  = 0.23
 output_per_1m = 0.40
@@ -38,3 +90,29 @@ output_per_1m = 0.40
 [models."llama-3.1-405b"]
 input_per_1m  = 3.00
 output_per_1m = 3.00
+
+[models."llama-4-scout"]
+input_per_1m  = 0.15
+output_per_1m = 0.60
+
+[models."llama-4-maverick"]
+input_per_1m  = 0.30
+output_per_1m = 0.90
+
+# ── Mistral ───────────────────────────────────────────────────────────────────
+[models."mistral-large"]
+input_per_1m  = 2.00
+output_per_1m = 6.00
+
+[models."mistral-small"]
+input_per_1m  = 0.10
+output_per_1m = 0.30
+
+# ── DeepSeek ──────────────────────────────────────────────────────────────────
+[models."deepseek-v3"]
+input_per_1m  = 0.27
+output_per_1m = 1.10
+
+[models."deepseek-r1"]
+input_per_1m  = 0.55
+output_per_1m = 2.19
