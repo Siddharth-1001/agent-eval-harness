@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,7 +12,7 @@ class HallucinationFlag(BaseModel):
     expected: str
     received: Any
     confidence: float  # 0.0–1.0
-    method: str  # "schema" | "semantic" | "llm_judge"
+    method: Literal["schema", "semantic", "llm_judge"]
 
 
 class ToolCall(BaseModel):
@@ -36,7 +36,7 @@ class TokenCount(BaseModel):
 
 class Turn(BaseModel):
     turn_id: int
-    role: str  # "user" | "assistant" | "system" | "tool"
+    role: Literal["user", "assistant", "system", "tool"]
     content: str
     tool_calls: list[ToolCall] = Field(default_factory=list)
     latency_ms: int = 0
