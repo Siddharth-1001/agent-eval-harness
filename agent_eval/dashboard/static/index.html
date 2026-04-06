@@ -156,6 +156,14 @@
   // ── Config ────────────────────────────────────────────────────────────────
   const API = '';   // same origin
 
+  // ── XSS-safe text escaping ────────────────────────────────────────────────
+  function esc(s) {
+    if (s == null) return '';
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(String(s)));
+    return div.innerHTML;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   let allRuns = [];
   let sortCol = 'created_at';
@@ -221,20 +229,20 @@
     }).join('');
 
     const bodyRows = sorted.map(r => {
-      const shortId = (r.run_id || '').slice(0, 8);
-      const metricsUrl = `/api/runs/${r.run_id}/metrics`;
+      const shortId = esc((r.run_id || '').slice(0, 8));
+      const metricsUrl = `/api/runs/${encodeURIComponent(r.run_id)}/metrics`;
       const rate = r.tool_success_rate != null ? (r.tool_success_rate * 100).toFixed(1) + '%' : '-';
       const cost = r.estimated_cost_usd != null ? '$' + r.estimated_cost_usd.toFixed(4) : '-';
       const created = r.created_at ? r.created_at.replace('T', ' ').slice(0, 16) : '-';
       return `<tr>
-        <td><a href="${metricsUrl}" target="_blank" title="${r.run_id}">${shortId}</a></td>
-        <td>${r.task || '-'}</td>
-        <td>${r.model || '-'}</td>
+        <td><a href="${metricsUrl}" target="_blank" title="${esc(r.run_id)}">${shortId}</a></td>
+        <td>${esc(r.task) || '-'}</td>
+        <td>${esc(r.model) || '-'}</td>
         <td>${r.turn_count ?? '-'}</td>
         <td>${r.total_tool_calls ?? '-'}</td>
         <td>${rate}</td>
         <td>${cost}</td>
-        <td>${created}</td>
+        <td>${esc(created)}</td>
       </tr>`;
     }).join('');
 
@@ -298,8 +306,8 @@
       { label: 'Input Tokens',        a: ma.cost.input_tokens,                 b: mb.cost.input_tokens,               higher: true,  raw_a: ma.cost.input_tokens,          raw_b: mb.cost.input_tokens },
     ];
 
-    const shortA = data.run_id_a.slice(0, 8);
-    const shortB = data.run_id_b.slice(0, 8);
+    const shortA = esc(data.run_id_a.slice(0, 8));
+    const shortB = esc(data.run_id_b.slice(0, 8));
 
     const rows = metrics.map(m => {
       const delta = m.raw_b - m.raw_a;

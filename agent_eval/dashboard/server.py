@@ -4,14 +4,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+logger = logging.getLogger("agent_eval.dashboard")
+
 _STATIC_DIR = Path(__file__).parent / "static"
+
+# Only allow UUIDs or valid prefixes (hex + hyphens)
+_RUN_ID_RE = re.compile(r"^[a-fA-F0-9\-]{1,36}$")
+
+
+def _validate_run_id(run_id: str) -> str:
+    """Validate and sanitize a run_id to prevent path traversal and injection."""
+    if not _RUN_ID_RE.match(run_id):
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
+    return Path(run_id).name  # strip any remaining path components
 
 
 class CompareRequest(BaseModel):
@@ -23,6 +37,21 @@ def create_app(traces_dir: Path) -> FastAPI:
     """Create and return the FastAPI app bound to *traces_dir*."""
 
     app = FastAPI(title="agent-eval dashboard")
+
+    # ── Security middleware ──────────────────────────────────────────────────
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'"
+        )
+        return response
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -37,8 +66,7 @@ def create_app(traces_dir: Path) -> FastAPI:
 
     def _load_trace_json(run_id: str) -> dict[str, Any]:
         """Load raw trace dict or raise HTTPException(404)."""
-        # Strip any path separators to prevent directory traversal attacks
-        safe_id = Path(run_id).name
+        safe_id = _validate_run_id(run_id)
         paths = list(traces_dir.glob(f"{safe_id}*.json"))
         if not paths:
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")

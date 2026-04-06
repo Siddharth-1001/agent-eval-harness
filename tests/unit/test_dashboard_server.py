@@ -125,7 +125,18 @@ async def test_get_run_not_found(populated_app) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=populated_app), base_url="http://test"
     ) as client:
+        # Invalid run_id format → 400
         resp = await client.get("/api/runs/nonexistent-run-id")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_get_run_not_found_valid_format(populated_app) -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=populated_app), base_url="http://test"
+    ) as client:
+        # Valid UUID format but doesn't exist → 404
+        resp = await client.get("/api/runs/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
 
 
@@ -149,8 +160,9 @@ async def test_get_run_metrics_not_found(populated_app) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=populated_app), base_url="http://test"
     ) as client:
+        # Invalid format → 400
         resp = await client.get("/api/runs/nonexistent/metrics")
-    assert resp.status_code == 404
+    assert resp.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -194,11 +206,12 @@ async def test_compare_missing_run_returns_404(populated_app) -> None:
     async with AsyncClient(
         transport=ASGITransport(app=populated_app), base_url="http://test"
     ) as client:
+        # "doesnotexist" is not a valid hex/UUID format → 400
         resp = await client.post(
             "/api/compare",
             json={"run_id_a": SAMPLE_RUN_ID, "run_id_b": "doesnotexist"},
         )
-    assert resp.status_code == 404
+    assert resp.status_code == 400
 
 
 # ── GET / (SPA fallback) ──────────────────────────────────────────────────────
